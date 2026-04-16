@@ -240,9 +240,20 @@ Two real pipeline runs are committed as evidence of what the skill actually prod
 
 All four patchable frictions are fixed in-tree.
 
+## Release process
+
+Versions are managed by [release-please](https://github.com/googleapis/release-please) driven by [Conventional Commits](https://www.conventionalcommits.org/).
+
+- Contributor PRs use commit prefixes: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, `ci:`. `BREAKING CHANGE:` in the body triggers a major bump.
+- Merging a PR with `feat:` or `fix:` commits to `main` causes release-please to open or update a **release PR**. The release PR bumps `plugin.json`'s `version` and rewrites `CHANGELOG.md`.
+- Merging the release PR creates the `vX.Y.Z` tag and a GitHub Release with auto-generated notes.
+- On tag push, a second workflow rewrites `marketplace.json`'s plugin `source` to pin the repo at the released commit sha. Users who `/plugin update harness` after that point receive exactly the released artifact, not whatever sits on `main` at the time.
+
+`ci.yml` runs the full unit-test matrix (Python 3.9–3.12), JSON Schema conformance, manifest sanity, and an end-to-end CLI smoke on every PR and every push to `main`.
+
 ## Status
 
-Early but usable. The CLI surface is complete (13/13 subcommands), both dogfood runs reached `pipeline_complete`, and the state-management layer has no known correctness bugs.
+Early but usable. The CLI surface is complete (13/13 subcommands), three dogfood runs reached `pipeline_complete`, and the state-management layer has no known correctness bugs.
 
 Known follow-ups are tracked as [GitHub Issues](https://github.com/skarl86/harness/issues).
 
