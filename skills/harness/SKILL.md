@@ -35,6 +35,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" <subcommand> [args...]
 - 환경변수:
   - `HARNESS_MAX_ATTEMPTS` (기본 1): task 재시도 예산.
 
+> **표기 규약**: 아래 본문에서 인라인 코드로 적힌 `harness <subcommand> ...`는 모두 위 전체 경로(`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" <subcommand> ...`)의 축약 표기다. Bash로 실행할 때는 항상 전체 경로를 써야 한다.
+
 각 subcommand의 상세 계약은 `scripts/README.md` 참조.
 
 ---
