@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "harness",
+  "description": "Self-hosted marketplace shipping the harness plugin: a Clarify -> Context -> Plan -> Generate -> Evaluate pipeline for Claude Code with deterministic state and crash-safe resume.",
+  "owner": {
+    "name": "skarl86"
+  },
+  "plugins": [
+    {
+      "name": "harness",
+      "description": "Adaptive 5-phase feature-implementation pipeline. SKILL.md drives creative phases via Agent calls; scripts/harness.py holds deterministic state (resume, verify, conflicts, classify-failure). stdlib Python + PyYAML only.",
+      "category": "development",
+      "source": "./",
+      "homepage": "https://github.com/skarl86/harness"
+    }
+  ]
+}

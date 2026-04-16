@@ -52,20 +52,32 @@ The CLI never calls an LLM. The skill never touches sidecars.
 
 ## Quickstart
 
-Install as a Claude Code plugin:
+Install inside any Claude Code session:
 
-```bash
-git clone https://github.com/skarl86/harness.git ~/.claude/plugins/harness
-pip install pyyaml   # only runtime dependency
+```
+/plugin marketplace add skarl86/harness
+/plugin install harness@harness
 ```
 
-Then in Claude Code:
+One-time runtime prereq:
+
+```bash
+pip install pyyaml
+```
+
+Then invoke the skill:
 
 ```
 /harness <your feature request>
 ```
 
-That's it. All artifacts land under `.harness/{slug}/` in your project, so multiple concurrent requests don't step on each other.
+Artifacts land under `.harness/{slug}/` in your project, so multiple concurrent requests don't step on each other.
+
+> **Development install** (clone instead of marketplace — useful for hacking on `harness` itself):
+> ```bash
+> git clone https://github.com/skarl86/harness.git ~/.claude/plugins/harness
+> pip install pyyaml
+> ```
 
 ## Architecture
 
