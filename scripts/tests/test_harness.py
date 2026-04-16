@@ -640,6 +640,215 @@ class TestArchivePlan(HarnessTestBase):
         self.assertTrue((self.slug_dir / "04-generate" / "task-1.1.json").exists())
 
 
+# --------------------------- classify-failure ---------------------------
+
+class TestClassifyFailure(HarnessTestBase):
+    def setUp(self):
+        super().setUp()
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        self.write_plan(
+            "demo",
+            [
+                {
+                    "phase": 1,
+                    "name": "s",
+                    "tasks": [
+                        {
+                            "id": "1.1",
+                            "name": "a",
+                            "prompt": "x",
+                            "artifacts": {"outputs": ["out.ts", "side.ts"]},
+                            "depends_on": [],
+                        },
+                        {
+                            "id": "1.2",
+                            "name": "b",
+                            "prompt": "x",
+                            "artifacts": {"outputs": []},
+                            "depends_on": [],
+                        },
+                    ],
+                }
+            ],
+        )
+        os.environ["HARNESS_MAX_ATTEMPTS"] = "2"
+
+    def _fail(self, tid, error="", attempts=1):
+        harness.cmd_log(
+            ns(slug="demo", task_id=tid, status="running", attempt_start=True, outputs=None, last_error=None)
+        )
+        for _ in range(attempts - 1):
+            harness.cmd_log(
+                ns(slug="demo", task_id=tid, status="running", attempt_start=True, outputs=None, last_error=None)
+            )
+        harness.cmd_log(
+            ns(slug="demo", task_id=tid, status="failed", attempt_start=False, outputs=None, last_error=error)
+        )
+
+    def test_all_outputs_missing_no_error_is_class_c(self):
+        self._fail("1.1")  # no error
+        r = harness.cmd_classify_failure(ns(slug="demo", task_id="1.1"))
+        self.assertEqual(r["suggested_class"], "C")
+        self.assertEqual(r["confidence"], "high")
+
+    def test_all_outputs_missing_with_transient_is_class_a(self):
+        self._fail("1.1", error="ImportError: no module named foo")
+        r = harness.cmd_classify_failure(ns(slug="demo", task_id="1.1"))
+        self.assertEqual(r["suggested_class"], "A")
+        self.assertEqual(r["confidence"], "medium")
+
+    def test_some_outputs_missing_is_class_a(self):
+        self._fail("1.1")
+        self.touch("out.ts", "x")
+        # side.ts still missing
+        r = harness.cmd_classify_failure(ns(slug="demo", task_id="1.1"))
+        self.assertEqual(r["suggested_class"], "A")
+        self.assertEqual(r["confidence"], "high")
+
+    def test_empty_output_counts_as_issue(self):
+        self._fail("1.1")
+        self.touch("out.ts", "x")
+        self.touch("side.ts", "")
+        r = harness.cmd_classify_failure(ns(slug="demo", task_id="1.1"))
+        self.assertEqual(r["suggested_class"], "A")
+
+    def test_transient_error_pattern_is_class_a(self):
+        self._fail("1.1", error="TypeError at line 42")
+        # all outputs exist
+        self.touch("out.ts", "x")
+        self.touch("side.ts", "y")
+        r = harness.cmd_classify_failure(ns(slug="demo", task_id="1.1"))
+        self.assertEqual(r["suggested_class"], "A")
+
+    def test_non_transient_error_is_class_b(self):
+        self._fail("1.1", error="the design is fundamentally wrong")
+        self.touch("out.ts", "x")
+        self.touch("side.ts", "y")
+        r = harness.cmd_classify_failure(ns(slug="demo", task_id="1.1"))
+        self.assertEqual(r["suggested_class"], "B")
+
+    def test_exceeded_budget_upgrades_a_to_b(self):
+        self._fail("1.1", error="TypeError", attempts=2)  # attempts=2, budget=2
+        self.touch("out.ts", "x")
+        self.touch("side.ts", "y")
+        r = harness.cmd_classify_failure(ns(slug="demo", task_id="1.1"))
+        self.assertEqual(r["suggested_class"], "B")
+        self.assertEqual(r["confidence"], "high")
+
+    def test_no_declared_outputs_is_class_c_low(self):
+        self._fail("1.2")
+        r = harness.cmd_classify_failure(ns(slug="demo", task_id="1.2"))
+        self.assertEqual(r["suggested_class"], "C")
+        self.assertEqual(r["confidence"], "low")
+
+    def test_non_failed_status_rejected(self):
+        harness.cmd_log(
+            ns(slug="demo", task_id="1.1", status="success", attempt_start=True, outputs=None, last_error=None)
+        )
+        with self.assertRaises(harness.HarnessError) as cm:
+            harness.cmd_classify_failure(ns(slug="demo", task_id="1.1"))
+        self.assertEqual(cm.exception.code, harness.EXIT_STATE)
+
+
+# --------------------------- stale ---------------------------
+
+class TestStale(HarnessTestBase):
+    def setUp(self):
+        super().setUp()
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        self.slug_dir = self.base / "demo"
+
+    def test_no_stale_initially(self):
+        self.write_plan(
+            "demo",
+            [{"phase": 1, "name": "s", "tasks": [{"id": "1.1", "name": "a", "prompt": "x", "depends_on": []}]}],
+        )
+        harness.cmd_log(
+            ns(slug="demo", task_id="1.1", status="success", attempt_start=True, outputs=None, last_error=None)
+        )
+        r = harness.cmd_stale(ns(slug="demo"))
+        self.assertEqual(r["stale_tasks"], [])
+        self.assertEqual(r["stale_approvals"], [])
+
+    def test_stale_task_after_plan_edit(self):
+        self.write_plan(
+            "demo",
+            [{"phase": 1, "name": "s", "tasks": [{"id": "1.1", "name": "a", "prompt": "x", "depends_on": []}]}],
+        )
+        harness.cmd_log(
+            ns(slug="demo", task_id="1.1", status="success", attempt_start=True, outputs=None, last_error=None)
+        )
+        # Mutate plan
+        import yaml
+        plan_file = self.slug_dir / "03-plan" / "phase-1-s.yaml"
+        data = yaml.safe_load(plan_file.read_text())
+        data["tasks"][0]["prompt"] = "changed"
+        plan_file.write_text(yaml.safe_dump(data))
+        r = harness.cmd_stale(ns(slug="demo"))
+        self.assertEqual(len(r["stale_tasks"]), 1)
+        self.assertEqual(r["stale_tasks"][0]["task_id"], "1.1")
+
+    def test_stale_approval_after_artifact_edit(self):
+        (self.slug_dir / "01-clarify.md").write_text("original")
+        harness.cmd_approve(ns(slug="demo", step=1, feedback=None, force=False))
+        (self.slug_dir / "01-clarify.md").write_text("edited later")
+        r = harness.cmd_stale(ns(slug="demo"))
+        self.assertEqual(len(r["stale_approvals"]), 1)
+        self.assertEqual(r["stale_approvals"][0]["step"], 1)
+
+
+# --------------------------- cleanup ---------------------------
+
+class TestCleanup(HarnessTestBase):
+    def setUp(self):
+        super().setUp()
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        self.slug_dir = self.base / "demo"
+
+    def test_backup_default(self):
+        r = harness.cmd_cleanup(ns(slug="demo", purge=False))
+        self.assertEqual(r["action"], "backed_up")
+        self.assertIsNotNone(r["backup_path"])
+        self.assertFalse(self.slug_dir.exists())
+        # backup dir should exist
+        matches = list(self.base.glob("demo.backup-*"))
+        self.assertEqual(len(matches), 1)
+
+    def test_purge(self):
+        r = harness.cmd_cleanup(ns(slug="demo", purge=True))
+        self.assertEqual(r["action"], "purged")
+        self.assertIsNone(r["backup_path"])
+        self.assertFalse(self.slug_dir.exists())
+
+    def test_missing_slug_rejected(self):
+        with self.assertRaises(harness.HarnessError) as cm:
+            harness.cmd_cleanup(ns(slug="nope", purge=False))
+        self.assertEqual(cm.exception.code, harness.EXIT_STATE)
+
+
+# --------------------------- list ---------------------------
+
+class TestList(HarnessTestBase):
+    def test_empty(self):
+        # base exists but no slugs
+        r = harness.cmd_list(ns())
+        self.assertEqual(r["slugs"], [])
+
+    def test_skips_backups(self):
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        (self.base / "demo.backup-2026").mkdir()
+        r = harness.cmd_list(ns())
+        self.assertEqual([s["slug"] for s in r["slugs"]], ["demo"])
+
+    def test_reports_pipeline_status(self):
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        r = harness.cmd_list(ns())
+        self.assertEqual(len(r["slugs"]), 1)
+        self.assertEqual(r["slugs"][0]["slug"], "demo")
+        self.assertEqual(r["slugs"][0]["pipeline_status"], "not_started")
+        self.assertIsNotNone(r["slugs"][0]["created_at"])
+
+
 # --------------------------- integration: CLI exit codes ---------------------------
 
 class TestCli(HarnessTestBase):

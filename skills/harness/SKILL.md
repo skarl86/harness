@@ -74,11 +74,21 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" scan <slug>
 
 ### 0-3. 사용자 재시작 요청
 
-"처음부터 다시"를 원하면 백업 후 재생성:
+"처음부터 다시"를 원하면 기존 아티팩트를 백업하고 재생성한다:
 ```bash
-mv .harness/<slug> ".harness/<slug>.backup-$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" cleanup <slug>
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" slug --request "$ARGUMENTS" --suggested "<slug>"
 ```
+
+`cleanup`은 기본적으로 `<slug>` 폴더를 `<slug>.backup-<timestamp>`로 이동한다 (실삭제는 `--purge` 필요). 되돌릴 여지를 남기므로 기본값을 사용한다.
+
+### 0-4. 진행 중인 슬러그 탐색
+
+"어떤 파이프라인이 열려 있지?" 같은 질문에는:
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" list
+```
+슬러그별 `pipeline_status`와 생성 시점을 반환한다.
 
 ---
 
@@ -231,7 +241,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" scan <slug>
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" archive-plan <slug>
 ```
 
-이 명령은 현재 `03-plan/`을 `03-plan.v{N}/`으로 이동하고 빈 `03-plan/`을 만든다. 기존 사이드카(`04-generate/task-*.json`)는 건드리지 않는다 — 다음 `scan` 호출 시 `stale[]`로 표시되어 Claude가 영향을 받는 task를 재실행할지 판단한다.
+이 명령은 현재 `03-plan/`을 `03-plan.v{N}/`으로 이동하고 빈 `03-plan/`을 만든다. 기존 사이드카(`04-generate/task-*.json`)는 건드리지 않는다 — 새 계획이 들어온 뒤 `harness stale <slug>`(또는 `scan`의 `stale[]`)로 checksum 불일치 task가 드러나면 Claude가 재실행 여부를 판단한다.
 
 ### Agent 호출 설정
 
@@ -413,41 +423,59 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" verify <slug> <task_id>
 
 ### 4-2. 실패 분류 결정트리
 
-`classify-failure` subcommand가 아직 구현되지 않았으므로 Claude가 다음 규칙으로 분류한다.
+실패가 감지되면 (Agent 에러 반환 OR `verify`의 `ok: false`) 다음 순서로 처리:
+
+**1. 실패 기록**
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" log <slug> <task_id> \
+  --status failed \
+  --last-error "<한두 문장 요약>"
+```
+
+**2. 자동 분류 호출**
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" classify-failure <slug> <task_id>
+```
+
+반환 JSON:
+```json
+{"task_id": "...", "suggested_class": "A|B|C", "confidence": "high|medium|low", "reasons": [...]}
+```
+
+**3. 클래스별 조치 (Claude가 `reasons`도 참고해 최종 판단)**
 
 **Class A — 자동 복구 (예산 내 재시도)**
-조건 중 하나:
-- `verify` 결과 `issue: "missing"` (선언된 output 파일이 없음)
-- `verify` 결과 `issue: "empty"` (파일은 있으나 비어있음)
-- Agent 반환문에 명확한 transient 에러 (syntax error, import 누락, 타입 오류 등)
+CLI가 이 클래스를 제안하는 근거:
+- 선언된 output 파일 일부 또는 전부가 missing/empty (전부 누락이면 C로 격상될 수 있음)
+- `last_error`에 transient 패턴 (TypeError, SyntaxError, ImportError, "cannot find" 등)
+- 그리고 `attempts < HARNESS_MAX_ATTEMPTS`
 
-그리고 `attempts < HARNESS_MAX_ATTEMPTS`.
+`confidence=high`이면 바로 자동 재시도 진행:
+- `prompt` 조정이 필요하면 plan YAML의 해당 task prompt를 Edit (선택).
+- 다음 루프에서 `next`가 같은 task를 `failed_within_budget`으로 돌려줌 → 4-1.4의 `--attempt-start`가 attempts를 +1 하며 재실행.
 
-**조치**:
-1. `prompt` 조정이 도움이 되면 plan YAML의 해당 task `prompt`를 Edit (선택).
-2. `log --status failed --last-error "<요약>"` 로 실패 기록 후,
-3. 다음 루프에서 `next`가 다시 이 task를 `failed_within_budget`으로 돌려줌 → 4-1.4부터 반복 (`--attempt-start`가 attempts를 +1).
+`confidence=medium/low`이면 사용자에게 `reasons`를 보여주고 재시도 여부 확인.
 
 **Class B — 사용자 판단 필요**
-조건 중 하나:
-- Output이 존재하고 비어있지 않지만 내용이 요구사항과 명백히 다름
-- Agent가 선언 외 파일을 만들었거나 엉뚱한 일을 함
-- Class A로 시도했으나 `attempts >= HARNESS_MAX_ATTEMPTS`에 도달
+CLI가 이 클래스를 제안하는 근거:
+- Output이 존재·비어있지 않지만 `last_error`가 non-transient
+- Agent가 선언 외 파일을 만든 정황
+- Class A 조건이지만 `attempts >= HARNESS_MAX_ATTEMPTS` (자동으로 A→B 격상)
+- 모호함: `last_error`가 없고 outputs는 모두 존재
 
-**조치**:
-1. `log --status failed --last-error "<요약>"`.
-2. 사용자에게 diff/상황 요약 + 선택지 제시 (계획 수정 후 재시도 / 이 task 건너뛰기 / 중단).
+**조치**: 사용자에게 `reasons` + 현재 상태 요약 + 선택지 제시 (계획 수정 후 재시도 / skip / abort).
 
 **Class C — 에스컬레이션**
-조건 중 하나:
-- Agent가 아무 output도 반환하지 않거나 정책상 거부
-- Agent 반환이 hallucination으로 보임 (declared output과 주장한 파일이 완전 불일치)
-- 원인 분류 자체가 모호
+CLI가 이 클래스를 제안하는 근거:
+- 선언된 output이 전부 missing 또는 empty (Agent가 아무것도 안 만듦)
+- Task에 output 선언이 없어 구조적 실패 검증 불가
 
 **조치**:
-1. `log --status blocked --last-error "<원인>"`.
-2. 해당 병렬 그룹의 나머지는 유지, 이 task만 차단.
+1. `harness log <slug> <task_id> --status blocked --last-error "<원인>"`.
+2. 병렬 그룹의 나머지는 유지, 이 task만 차단.
 3. 사용자에게 raw 에러 + 컨텍스트 보고, 수동 개입 요청.
+
+> `classify-failure`는 **제안**이다. `reasons`를 읽고 Claude가 납득되지 않으면 재분류하거나 사용자 판단을 받는다. 특히 `confidence=low`인 제안은 그대로 따르지 말 것.
 
 ### 4-3. 병렬 그룹 실패 처리
 
