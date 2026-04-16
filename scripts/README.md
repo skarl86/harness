@@ -116,6 +116,12 @@ All paths the CLI emits are POSIX-style, relative to the project root
 
 Unrecognized `HARNESS_*` variables are ignored silently.
 
+### Resolution priority (max_attempts)
+
+`HARNESS_MAX_ATTEMPTS` env var  >  `.harness/{slug}/config.json` max_attempts  >  built-in default (1)
+
+Use `harness config <slug> --max-attempts N` to persist a non-default budget per slug without needing to export the env var on every Bash call.
+
 ---
 
 ## Data model
@@ -125,6 +131,7 @@ Unrecognized `HARNESS_*` variables are ignored silently.
 | `.harness/{slug}/04-generate/task-{id}.json` | [task-state](./schemas/task-state.schema.json) | Per-task machine state |
 | `.harness/{slug}/03-plan/phase-{N}-*.yaml`   | [plan](./schemas/plan.schema.json) | Phase+tasks definition |
 | `.harness/{slug}/.approvals/step-{N}.json`   | [approval](./schemas/approval.schema.json) | User gate approvals |
+| `.harness/{slug}/config.json`                | [config](./schemas/config.schema.json) | Per-slug overrides (currently `max_attempts`) |
 
 Other files (`00-request.md`, `01-clarify.md`, `02-context.md`,
 `04-generate/task-*.md`, `04-generate/summary.md`, `05-evaluate.md`)
@@ -378,13 +385,23 @@ The written sidecar content (see task-state schema).
 ### `verify`
 
 Check that a task's declared outputs exist and are non-empty. Updates
-the sidecar's `outputs` field with observed sizes.
+the sidecar's `outputs` field with observed sizes. Optionally runs a
+language-based syntax check with `--syntax`.
 
 **Synopsis**
 
 ```
-harness.py verify <slug> <task_id>
+harness.py verify <slug> <task_id> [--syntax]
 ```
+
+**Flags**
+
+- `--syntax`: for each existing non-empty output, parse it based on file
+  extension. `.py` via `py_compile`, `.json` via `json.load`, `.yaml`/`.yml`
+  via `yaml.safe_load`. Unknown extensions keep the structural-only result.
+  On syntax failure, `issue` becomes `"syntax_error: ..."` and `ok` becomes
+  `false`. External toolchains (tsc, gofmt, etc.) are deliberately out of
+  scope — run them from the skill or in Step 5 Evaluate.
 
 **stdout**
 
@@ -632,6 +649,33 @@ harness.py cleanup <slug> [--purge]
 On `--purge`, `action` is `"purged"` and `backup_path` is `null`.
 
 **Exit codes:** `0`, `3`, `4`.
+
+---
+
+### `config`
+
+View or update per-slug `config.json`. Without setter flags, prints the
+current contents (or just `{"schema_version": 1}` if the file does not
+exist yet). With setter flags, updates and writes atomically.
+
+**Synopsis**
+
+```
+harness.py config <slug> [--max-attempts N]
+```
+
+**stdout**
+
+The effective config after any update:
+
+```json
+{
+  "schema_version": 1,
+  "max_attempts": 3
+}
+```
+
+**Exit codes:** `0`, `1` (invalid value, e.g., negative `--max-attempts`), `3`, `5`.
 
 ---
 

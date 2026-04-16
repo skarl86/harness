@@ -35,7 +35,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" <subcommand> [args...]
 - 환경변수:
   - `HARNESS_MAX_ATTEMPTS` (기본 1): task 재시도 예산.
 
-> **환경변수 영속성 주의**: Bash 호출마다 새 shell이 열리므로 `export HARNESS_MAX_ATTEMPTS=2`를 한 번 한다고 후속 호출에 전달되지 않는다. 기본값(1) 외의 예산을 쓰려면 **매 호출마다 인라인**으로 지정: `HARNESS_MAX_ATTEMPTS=2 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" ...`. 그러지 않으면 `classify-failure`가 예산=1 기준으로 판정해 A→B 자동 격상이 과하게 일어난다.
+> **환경변수 영속성 주의**: Bash 호출마다 새 shell이 열리므로 `export HARNESS_MAX_ATTEMPTS=2`를 한 번 한다고 후속 호출에 전달되지 않는다. 두 가지 방법:
+> 1. **인라인 지정 (일회성)**: `HARNESS_MAX_ATTEMPTS=2 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" ...`
+> 2. **영속 설정 (권장)**: `harness config <slug> --max-attempts 2` 한 번 실행. 이후 모든 CLI 호출이 `.harness/<slug>/config.json`에서 값을 읽는다.
+>
+> 우선순위는 **env > config.json > 기본값(1)**. 어느 쪽도 쓰지 않으면 예산 1 기준으로 `classify-failure`가 A→B 격상을 과하게 일으킬 수 있다.
 
 > **표기 규약**: 아래 본문에서 인라인 코드로 적힌 `harness <subcommand> ...`는 모두 위 전체 경로(`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" <subcommand> ...`)의 축약 표기다. Bash로 실행할 때는 항상 전체 경로를 써야 한다.
 
@@ -421,20 +425,27 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" verify <slug> <task_id>
 
 반환의 `ok: false`면 실제로는 실패 — 4-2로 이동.
 
-d. **언어별 sanity check** (verify로 잡히지 않는 문제 감지):
+d. **언어별 syntax check** (structural 검증으로 잡히지 않는 문제 감지):
 
-`verify`는 **구조적 검증만** 수행한다 (파일 존재 + 비어있지 않음). 구문 오류나 임포트 누락은 잡지 못하므로, 프로젝트에 해당 도구가 있을 때 Claude가 Bash로 추가 검증을 실행한다:
-- Python: `python3 -c "import py_compile; py_compile.compile('<file>', doraise=True)"`
+기본 `verify`는 **structural 검증만** 수행한다 (파일 존재 + 비어있지 않음). `--syntax` 플래그를 추가하면 파일 확장자 기반으로 구문 파싱까지 확인한다:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" verify <slug> <task_id> --syntax
+```
+
+지원 확장자: `.py` (py_compile), `.json` (json.load), `.yaml`/`.yml` (yaml.safe_load). 미지원 확장자는 structural 검증 결과만 유지된다.
+
+미지원 언어(TypeScript/Rust/Go 등)는 Claude가 Bash로 별도 검증:
 - TypeScript: `npx tsc --noEmit <file>` (tsconfig 있을 때)
-- JSON: `python3 -m json.tool <file> > /dev/null`
-- YAML: `python3 -c "import yaml; yaml.safe_load(open('<file>'))"`
+- Go: `gofmt -e <file>`
+- Rust: `rustc --edition 2021 --emit=metadata -o /dev/null <file>`
 
-이 단계에서 실패가 감지되면 log를 success → failed로 전환 후 4-2로 이동:
+syntax 또는 외부 검증에서 실패가 감지되면 log를 success → failed로 전환:
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" log <slug> <task_id> --status failed --last-error "<요약>"
 ```
 
-실패(Agent 에러 반환, verify ok=false, 또는 sanity check 실패)면 4-2로.
+실패(Agent 에러 반환, verify ok=false, 또는 syntax 검증 실패)면 4-2로.
 
 ### 4-2. 실패 분류 결정트리
 
