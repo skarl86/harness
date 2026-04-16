@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/skarl86/harness/schemas/task-state.schema.json",
+  "title": "Harness Task State",
+  "description": "Per-task machine state sidecar. Lives at .harness/{slug}/04-generate/task-{id}.json. Written only by the harness CLI; never edited by hand or by Claude directly.",
+  "type": "object",
+  "required": ["schema_version", "id", "phase", "status", "attempts", "last_updated"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Schema version. Bumped on breaking changes; CLI rejects unknown versions."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Task identifier in the form PHASE.TASK (e.g., '1.2'). Must match an id in the current plan."
+    },
+    "phase": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Phase number this task belongs to."
+    },
+    "status": {
+      "enum": ["not_started", "running", "success", "failed", "blocked", "skipped"],
+      "description": "Current execution state. Transitions managed by 'harness log'. 'blocked' means retry budget exhausted and user intervention is required."
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of times Agent execution has been attempted for this task. Incremented each time status moves to 'running'."
+    },
+    "started": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of the most recent attempt's start. Null if never run."
+    },
+    "completed": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of terminal-state transition. Null if still running or never finished."
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of the most recent sidecar write."
+    },
+    "outputs": {
+      "type": "array",
+      "description": "Files the task declared or actually produced. Populated by 'harness log --outputs' and verified by 'harness verify'.",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path relative to the project root."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Byte size at last verification. Missing if not yet verified."
+          },
+          "exists": {
+            "type": "boolean",
+            "description": "Whether the file existed at last verification."
+          }
+        }
+      },
+      "default": []
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+      "description": "Task ids this task depends on. Copied from plan at log-time to detect plan drift.",
+      "default": []
+    },
+    "last_error": {
+      "type": ["string", "null"],
+      "description": "Error summary from the most recent failed attempt. Null on success.",
+      "default": null
+    },
+    "plan_checksum": {
+      "type": ["string", "null"],
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "SHA-256 hash of the canonicalized task definition from the plan at execution time. Mismatch with current plan indicates stale state."
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/skarl86/harness/schemas/plan.schema.json",
+  "title": "Harness Plan Phase File",
+  "description": "Structure of phase-{N}-{name}.yaml files under .harness/{slug}/03-plan/. Written by the Plan Agent; validated by 'harness scan' and 'harness next'.",
+  "type": "object",
+  "required": ["phase", "name", "tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "phase": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Phase number. Must match the N in the filename phase-{N}-*.yaml."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable phase name."
+    },
+    "description": {
+      "type": "string",
+      "description": "Phase description for human readers."
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "prompt"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+$",
+            "description": "Task identifier PHASE.TASK. Must be unique across the whole plan."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "artifacts": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Files this task reads. Paths relative to project root. Placeholders like {BASE}02-context.md may appear and are substituted by the orchestrator, not the CLI.",
+                "default": []
+              },
+              "outputs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Files this task is expected to create/modify. Used by 'harness verify' and 'harness conflicts'. Placeholders must be resolved before execution.",
+                "default": []
+              }
+            }
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Implementation prompt passed verbatim to the execution Agent. May be multi-line."
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+            "description": "Task ids that must complete with status=success before this task is eligible.",
+            "default": []
+          }
+        }
+      }
+    }
+  }
+}
