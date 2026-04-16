@@ -1,0 +1,27 @@
+phase: 2
+name: "Tests"
+description: "stdlib unittest로 urldecode.py 단위 테스트 추가."
+tasks:
+  - id: "2.1"
+    name: "Write test_urldecode.py"
+    description: "decode_line과 main()의 두 출력 모드를 테스트."
+    artifacts:
+      inputs: ["urldecode.py"]
+      outputs: ["test_urldecode.py"]
+    prompt: |
+      `test_urldecode.py` 파일을 생성한다. `unittest.TestCase` 기반:
+
+      1. `import urldecode` (같은 디렉토리)
+      2. `TestDecodeLine` 클래스:
+         - `test_plain`: `decode_line("a%20b\n")` == `"a b"`
+         - `test_empty_string`: `decode_line("")` == `""`
+         - `test_percent_hex`: `decode_line("%2Fpath")` == `"/path"`
+      3. `TestMain` 클래스:
+         - stdin/stdout을 `io.StringIO`로 대체
+         - `sys.argv` 모킹으로 `--json` 모드 테스트
+         - text 모드: `"a%20b\n\n%2F\n"` 입력 → `"a b\n/\n"` 출력 (빈 줄 스킵 확인)
+         - json 모드: `"a%20b\n"` 입력 → `'{"input": "a%20b", "decoded": "a b"}\n'` 출력
+
+      ## 완료 조건
+      - `python3 -m unittest test_urldecode` 호출 시 모든 테스트 통과
+    depends_on: ["1.3"]

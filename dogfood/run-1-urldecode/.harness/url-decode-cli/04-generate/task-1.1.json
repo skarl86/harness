@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "1.1",
+  "phase": 1,
+  "status": "success",
+  "attempts": 1,
+  "started": "2026-04-16T18:06:27Z",
+  "completed": "2026-04-16T18:06:31Z",
+  "last_updated": "2026-04-16T18:06:31Z",
+  "outputs": [
+    {
+      "path": "urldecode.py",
+      "size": 436,
+      "exists": true
+    }
+  ],
+  "depends_on": [],
+  "last_error": null,
+  "plan_checksum": "sha256:534577981fed51c42b996339f62cf88b1aba56a1e0d495a78cb9eaeb1b3eb710"
+}

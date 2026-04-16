@@ -1,0 +1,71 @@
+phase: 1
+name: "Implementation"
+description: "urldecode.py CLI 구현 — stdin 읽기, 디코딩, 두 가지 출력 모드."
+tasks:
+  - id: "1.1"
+    name: "Scaffold urldecode.py"
+    description: "argparse로 --json 플래그를 받고, 빈 main() 루프가 stdin을 읽도록 스켈레톤 구성."
+    artifacts:
+      inputs: []
+      outputs: ["urldecode.py"]
+    prompt: |
+      단일 파일 `urldecode.py`를 생성한다. 내용:
+
+      1. shebang `#!/usr/bin/env python3`
+      2. import: `sys`, `argparse`, `json`, `urllib.parse`
+      3. `def main() -> int:` 함수:
+         - argparse로 `--json` 플래그 (store_true, default=False) 정의
+         - `parser.parse_args()` 호출
+         - `for line in sys.stdin:` 루프 (지금은 pass만)
+         - `return 0` 반환
+      4. `if __name__ == "__main__": sys.exit(main())`
+
+      ## 완료 조건
+      - 파일이 파싱 가능 (syntax error 없음)
+      - `python3 urldecode.py --help` 실행 시 `--json` 플래그가 표시됨
+    depends_on: []
+
+  - id: "1.2"
+    name: "Decoder + text-mode output"
+    description: "decode_line() 헬퍼를 추가하고 main() 루프에서 호출해 평문 출력."
+    artifacts:
+      inputs: ["urldecode.py"]
+      outputs: ["urldecode.py"]
+    prompt: |
+      `urldecode.py`를 편집한다:
+
+      1. 새 함수:
+         ```python
+         def decode_line(line: str) -> str:
+             return urllib.parse.unquote(line.rstrip("\n"))
+         ```
+      2. `main()` 루프 수정:
+         - 빈 줄(rstrip 후 공백만)은 `continue`로 건너뛴다
+         - 디코딩 결과를 `print()`로 출력
+
+      JSON 모드는 아직 구현하지 말 것 (--json이 True여도 지금은 동일 동작).
+
+      ## 완료 조건
+      - `echo 'a%20b' | python3 urldecode.py` → `a b` 한 줄 출력
+      - 빈 줄 건너뛰기 확인
+    depends_on: ["1.1"]
+
+  - id: "1.3"
+    name: "--json mode"
+    description: "--json 플래그가 True면 {input, decoded} JSON 한 줄씩 출력."
+    artifacts:
+      inputs: ["urldecode.py"]
+      outputs: ["urldecode.py"]
+    prompt: |
+      `urldecode.py`의 main() 루프를 수정해 `args.json`이 True이면 각 줄을 다음 형식으로 출력:
+
+      ```json
+      {"input": "원본", "decoded": "디코딩"}
+      ```
+
+      - `json.dumps(..., ensure_ascii=False)` 사용
+      - 빈 줄은 여전히 스킵
+
+      ## 완료 조건
+      - `echo 'a%20b' | python3 urldecode.py --json` → `{"input":"a%20b","decoded":"a b"}`
+    depends_on: ["1.2"]
