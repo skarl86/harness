@@ -14,12 +14,16 @@ allowed-tools: Bash Read Write Edit Glob Grep Agent AskUserQuestion
 
 ```
 artifacts/
+├── 00-request.md        # 사용자 요청 원문
 ├── 01-clarify.md        # Step 1 결과: 분석된 요구사항 + 논의 결과
 ├── 02-context.md        # Step 2 결과: 코드베이스 컨텍스트 요약
 ├── 03-plan/             # Step 3 결과: Phase/Task YAML 파일들
 │   ├── phase-1-*.yaml
 │   └── phase-2-*.yaml
-├── 04-generate.md       # Step 4 결과: 생성/실행 결과 리포트
+├── 04-generate/         # Step 4 결과: Task별 실행 로그
+│   ├── task-1.1.md      # 개별 Task 실행 결과
+│   ├── task-1.2.md
+│   └── summary.md       # 전체 실행 요약 리포트
 └── 05-evaluate.md       # Step 5 결과: 품질 검증 리포트
 ```
 
@@ -27,8 +31,21 @@ artifacts/
 
 ### 사전 준비
 
-1. `artifacts/` 디렉토리를 생성한다 (이미 있으면 기존 artifact를 정리할지 사용자에게 확인).
-2. 사용자의 요청 `$ARGUMENTS`를 `artifacts/00-request.md`에 원문 그대로 저장한다.
+1. `artifacts/` 디렉토리 존재 여부를 확인한다.
+2. **이미 존재하면 → Resume 감지**를 수행한다:
+   a. 아래 순서로 artifact를 확인하여 마지막 완료 단계를 판별한다:
+      - `artifacts/05-evaluate.md` 존재 → 파이프라인 완료 상태
+      - `artifacts/04-generate/` 존재 → Step 4 진행 중 또는 완료
+      - `artifacts/03-plan/` 존재 → Step 3 완료
+      - `artifacts/02-context.md` 존재 → Step 2 완료
+      - `artifacts/01-clarify.md` 존재 → Step 1 완료
+      - `artifacts/00-request.md`만 존재 → 시작 전
+   b. Step 4 진행 중인 경우, `artifacts/04-generate/task-*.md` 파일들을 읽어 각 Task의 완료 상태를 파악한다.
+   c. 사용자에게 감지된 상태를 보고하고, **어디서부터 재개할지** 확인한다:
+      - "Step N부터 재개합니다. 진행할까요?"
+      - 사용자가 처음부터 다시 하길 원하면 기존 artifact를 정리한다.
+3. **존재하지 않으면** → `artifacts/` 디렉토리를 생성한다.
+4. 사용자의 요청 `$ARGUMENTS`를 `artifacts/00-request.md`에 원문 그대로 저장한다 (resume 시에는 기존 파일 유지).
 
 ---
 
@@ -246,33 +263,92 @@ tasks:
 
 ---
 
-### Step 4: Generate (Sub-Agent)
+### Step 4: Generate (적응적 실행)
 
 `artifacts/03-plan/` 의 Phase YAML 파일들을 읽고, 각 Task를 sub-agent로 실행한다.
+실행 중 **구조화 로깅**으로 진행 상태를 기록하고, 실패 시 **지능적 복구**를 수행한다.
 
-**실행 방식:**
+#### 4-1. 로드 및 준비
 
 1. Phase YAML 파일들을 Phase 번호 순으로 로드한다.
 2. 각 Phase 내 Task를 `depends_on` 기반으로 위상 정렬한다.
-3. **의존관계가 없는 Task들은 병렬로** Agent를 호출한다 (동일 메시지에 여러 Agent 호출).
-4. **의존관계가 있는 Task는 선행 Task 완료 후** 순차 실행한다.
+3. `artifacts/04-generate/` 디렉토리를 생성한다.
+4. **Resume 모드인 경우**: 기존 `task-*.md` 파일들을 읽어 `status: success`인 Task를 건너뛸 목록에 추가한다.
 
-**각 Task의 Agent 호출 설정:**
+#### 4-2. Task 실행 루프
+
+각 Task에 대해 다음 순서로 실행한다:
+
+**A. 사전 점검 (실행 전)**
+1. `artifacts/04-generate/task-{id}.md`가 이미 존재하고 `status: success`이면 → **건너뛴다**.
+2. 선행 Task(`depends_on`)의 실제 output 파일들이 존재하는지 확인한다.
+   - 존재하지 않으면: 선행 Task의 로그를 읽고 원인을 파악한 후 사용자에게 보고.
+3. 선행 Task의 output이 계획과 다른 경우 (파일명/함수명 변경 등), 현재 Task의 prompt를 **실제 상태에 맞게 조정**한다.
+
+**B. Agent 실행**
 - `subagent_type`: `general-purpose`
 - `description`: `Task {task_id}: {task_name}`
 
-**각 Task의 Agent Prompt:**
 ```
-{task.prompt 내용을 그대로 전달}
+{task.prompt — 필요시 4-2.A에서 조정된 버전}
 
 ## 추가 지시사항
-- 작업 완료 후 변경된 파일 목록과 핵심 변경 내용을 텍스트로 반환하세요.
+- 작업 완료 후 아래 형식으로 결과를 반환하세요:
+  - 변경된 파일 목록 (생성/수정/삭제 구분)
+  - 핵심 변경 내용 요약
+  - 계획 대비 달라진 점이 있으면 명시 (파일명, 함수명, 구조 변경 등)
 - 오류가 발생하면 오류 내용과 시도한 해결 방법을 반환하세요.
 ```
 
-**결과 수집:**
-- 각 Task Agent의 반환 결과를 수집한다.
-- 모든 Task 완료 후, 전체 결과를 `artifacts/04-generate.md`에 아래 형식으로 작성한다:
+**C. 결과 로깅 (실행 직후, 즉시)**
+
+Agent 반환 결과를 `artifacts/04-generate/task-{id}.md`에 기록한다:
+
+```markdown
+# Task {id}: {name}
+
+- status: success | failed | skipped
+- phase: {phase_number}
+- started: {ISO timestamp}
+- completed: {ISO timestamp}
+
+## 변경 파일
+- [created] src/path/to/file.ts
+- [modified] src/other/file.ts
+
+## 실행 요약
+(Agent가 반환한 결과 요약)
+
+## 계획 대비 변경점
+(파일명, 함수명, 구조 등 계획과 달라진 부분. 없으면 "없음")
+
+## 오류 (실패 시)
+(오류 내용 + 시도한 해결 방법)
+```
+
+> **중요**: 각 Task 완료 즉시 로그 파일을 작성한다. 모든 Task가 끝날 때까지 기다리지 않는다.
+
+**D. 실패 처리 (지능적 복구)**
+
+Task가 실패하면:
+
+1. **진단**: Agent 반환 결과와 실제 파일 상태를 분석하여 실패 원인을 파악한다.
+2. **자동 복구 시도**: 원인이 명확하고 수정 가능한 경우 (타입 오류, import 누락 등), prompt를 수정하여 **1회 재시도**한다.
+   - 재시도 시 `task-{id}.md`에 `## 재시도` 섹션을 추가하여 기록.
+3. **사용자 판단 요청**: 자동 복구 실패 또는 원인 불명 시, 사용자에게 보고하고 선택지를 제시한다:
+   - 수정된 prompt로 재시도
+   - 이 Task를 건너뛰고 계속 진행
+   - 파이프라인 중단
+
+#### 4-3. 병렬 실행
+
+- **의존관계가 없는 Task들은 병렬로** Agent를 호출한다 (동일 메시지에 여러 Agent 호출).
+- **의존관계가 있는 Task는 선행 Task 완료 후** 순차 실행한다.
+- 병렬 그룹 내 일부 Task 실패 시: 실패한 Task만 복구 처리하고, 성공한 Task는 유지한다.
+
+#### 4-4. 요약 리포트
+
+모든 Task 완료 후 (또는 중단 시), `artifacts/04-generate/summary.md`를 작성한다:
 
 ```markdown
 # 생성 결과 리포트
@@ -282,19 +358,17 @@ tasks:
 - 총 Task: N개
 - 성공: N개
 - 실패: N개
+- 건너뜀: N개
 
 ## Task별 결과
+| Task | 이름 | 상태 | 비고 |
+|------|------|------|------|
+| 1.1 | ... | success | |
+| 1.2 | ... | failed | 1회 재시도 후 성공 |
 
-### Task 1.1: {name}
-- 상태: 성공/실패
-- 변경 파일: ...
-- 요약: ...
-
-### Task 1.2: {name}
-...
+## 계획 대비 주요 변경점
+(Task 로그에서 수집한 계획 대비 달라진 점 종합)
 ```
-
-- 실패한 Task가 있으면 사용자에게 보고하고, 재시도 여부를 확인한다.
 
 ---
 
@@ -314,7 +388,8 @@ Agent 도구를 사용하여 Evaluate 에이전트를 호출한다.
 아래 artifact 파일들을 읽어 전체 맥락을 파악하세요:
 - artifacts/00-request.md (원래 요청)
 - artifacts/01-clarify.md (요구사항)
-- artifacts/04-generate.md (생성 결과 리포트)
+- artifacts/04-generate/summary.md (생성 결과 리포트)
+- artifacts/04-generate/task-*.md (개별 Task 실행 로그 — 필요시 참조)
 
 ## 작업
 생성된 코드의 품질을 검증하세요.
