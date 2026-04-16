@@ -1,0 +1,23 @@
+phase: 2
+name: "Tests"
+description: "단위 테스트."
+tasks:
+  - id: "2.1"
+    name: "test_wc.py"
+    description: "count_words + main 테스트."
+    artifacts:
+      inputs: ["wc.py"]
+      outputs: ["test_wc.py"]
+    prompt: |
+      `test_wc.py` 생성. unittest 기반:
+
+      - `TestCountWords`:
+        - `test_empty`: `count_words("")` → 빈 Counter
+        - `test_lowercase`: `count_words("The THE the")` → `{"the": 3}`
+        - `test_punctuation`: `count_words("hello, world! hello.")` → `{"hello": 2, "world": 1}`
+
+      - `TestMain`: stdin/stdout 모킹해 출력 순서 확인 (`the: 3` → `brown: 1` ...).
+
+      ## 완료 조건
+      - `python3 -m unittest test_wc` 전부 통과
+    depends_on: ["1.1"]

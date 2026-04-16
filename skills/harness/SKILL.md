@@ -249,6 +249,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" archive-plan <slug>
 
 이 명령은 현재 `03-plan/`을 `03-plan.v{N}/`으로 이동하고 빈 `03-plan/`을 만든다. 기존 사이드카(`04-generate/task-*.json`)는 건드리지 않는다 — 새 계획이 들어온 뒤 `harness stale <slug>`(또는 `scan`의 `stale[]`)로 checksum 불일치 task가 드러나면 Claude가 재실행 여부를 판단한다.
 
+> **주의**: `archive-plan` 이후 Plan Agent로 v2 계획을 생성하고 사용자가 재승인할 때는 기존 `.approvals/step-3.json`이 v1 artifact에 묶여 있어 `approve --step 3`가 exit 3으로 거부된다. 새 계획에 대한 승인이므로 **`--force`** 를 붙여 재기록한다:
+> ```bash
+> python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" approve <slug> --step 3 --force --feedback "<새 계획 코멘트>"
+> ```
+
 ### Agent 호출 설정
 
 - `subagent_type`: `Plan`

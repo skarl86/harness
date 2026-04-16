@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "1.1",
+  "phase": 1,
+  "status": "success",
+  "attempts": 2,
+  "started": "2026-04-16T18:29:05Z",
+  "completed": "2026-04-16T18:29:10Z",
+  "last_updated": "2026-04-16T18:29:10Z",
+  "outputs": [
+    {
+      "path": "wc.py",
+      "size": 638,
+      "exists": true
+    }
+  ],
+  "depends_on": [],
+  "last_error": null,
+  "plan_checksum": "sha256:753f7b5a26b3d12e7c8d649f578d70ea10186d9eca4487517dac7759881a3f70"
+}

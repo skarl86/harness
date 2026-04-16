@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "step": 1,
+  "approved_at": "2026-04-16T18:27:34Z",
+  "feedback": "text output only, JSON deferred",
+  "artifact_checksum": "sha256:7dbf4f91bc637aa968c68b84bf6b4d7028c800d94ee28eda75d62d3ddca10ac9"
+}

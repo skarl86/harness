@@ -1,0 +1,46 @@
+phase: 1
+name: "Core"
+description: "wc.py CLI 구현 — 텍스트 + JSON 모드 지원."
+tasks:
+  - id: "1.1"
+    name: "Scaffold wc.py with json-ready imports"
+    description: "argparse + count_words + main loop. json 모듈 import 포함 (1.2에서 사용 준비)."
+    artifacts:
+      inputs: []
+      outputs: ["wc.py"]
+    prompt: |
+      `wc.py`를 생성:
+
+      1. shebang `#!/usr/bin/env python3`
+      2. import: `sys`, `argparse`, `json`, `re`, `collections.Counter`
+      3. 헬퍼: `def count_words(text: str) -> Counter:` — `re.findall(r"\w+", text.lower())` + Counter.
+      4. `main() -> int`:
+         - argparse (플래그 아직 없음, 1.2에서 추가)
+         - stdin 전체를 `count_words`로 → 빈도 내림차순+알파벳 오름차순 정렬
+         - text 모드 기본 출력: `print(f"{word}: {count}")`
+      5. `if __name__ == "__main__": sys.exit(main())`
+
+      ## 완료 조건
+      - `echo 'the quick brown fox the lazy the' | python3 wc.py` → `the: 3\nbrown: 1\nfox: 1\nlazy: 1\nquick: 1`
+      - py_compile 통과
+    depends_on: []
+
+  - id: "1.2"
+    name: "Add --json flag"
+    description: "wc.py에 --json 플래그 추가. 활성화 시 전체 빈도 dict를 JSON 한 줄로 출력."
+    artifacts:
+      inputs: ["wc.py"]
+      outputs: ["wc.py"]
+    prompt: |
+      `wc.py`를 편집:
+
+      1. argparse에 `--json` (store_true) 플래그 추가.
+      2. `main()` 분기:
+         - `args.json`이 True면: 정렬된 (word, count) 쌍을 dict로 만들어 `json.dumps(..., ensure_ascii=False)` 한 줄 출력. 삽입 순서 = 빈도 내림차순 + 알파벳 오름차순.
+         - 아니면 기존 text 출력.
+      3. 기존 text 동작 회귀 없음.
+
+      ## 완료 조건
+      - `echo 'the quick brown fox the lazy the' | python3 wc.py --json` → `{"the": 3, "brown": 1, "fox": 1, "lazy": 1, "quick": 1}`
+      - text 모드 그대로 동작
+    depends_on: ["1.1"]
