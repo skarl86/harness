@@ -160,6 +160,8 @@ class TestLog(HarnessTestBase):
         )
         self.assertEqual(r["attempts"], 2)
         self.assertIsNone(r["last_error"])
+        # completed should be reset on attempt-start (prior failure had stamped it)
+        self.assertIsNone(r["completed"])
 
     def test_outputs_accepts_strings_and_objects(self):
         r = harness.cmd_log(
@@ -521,6 +523,121 @@ class TestSummary(HarnessTestBase):
         self.assertIn("1.1", sm)
         self.assertIn("1.2", sm)
         self.assertIn("boom", sm)
+
+
+# --------------------------- approve ---------------------------
+
+class TestApprove(HarnessTestBase):
+    def setUp(self):
+        super().setUp()
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        self.slug_dir = self.base / "demo"
+
+    def test_approve_step_1(self):
+        (self.slug_dir / "01-clarify.md").write_text("clarified")
+        r = harness.cmd_approve(ns(slug="demo", step=1, feedback="ok", force=False))
+        self.assertEqual(r["step"], 1)
+        self.assertTrue(r["artifact_checksum"].startswith("sha256:"))
+        self.assertEqual(r["feedback"], "ok")
+
+    def test_approve_step_3(self):
+        self.write_plan(
+            "demo",
+            [{"phase": 1, "name": "s", "tasks": [{"id": "1.1", "name": "a", "prompt": "x", "depends_on": []}]}],
+        )
+        r = harness.cmd_approve(ns(slug="demo", step=3, feedback=None, force=False))
+        self.assertEqual(r["step"], 3)
+        self.assertIsNone(r["feedback"])
+        self.assertTrue(r["artifact_checksum"].startswith("sha256:"))
+
+    def test_missing_artifact_rejects(self):
+        with self.assertRaises(harness.HarnessError) as cm:
+            harness.cmd_approve(ns(slug="demo", step=1, feedback=None, force=False))
+        self.assertEqual(cm.exception.code, harness.EXIT_STATE)
+
+    def test_invalid_step_rejected(self):
+        with self.assertRaises(harness.HarnessError) as cm:
+            harness.cmd_approve(ns(slug="demo", step=2, feedback=None, force=False))
+        self.assertEqual(cm.exception.code, harness.EXIT_USAGE)
+
+    def test_double_approve_without_force_rejects(self):
+        (self.slug_dir / "01-clarify.md").write_text("clarified")
+        harness.cmd_approve(ns(slug="demo", step=1, feedback=None, force=False))
+        with self.assertRaises(harness.HarnessError) as cm:
+            harness.cmd_approve(ns(slug="demo", step=1, feedback=None, force=False))
+        self.assertEqual(cm.exception.code, harness.EXIT_STATE)
+
+    def test_force_overwrites(self):
+        (self.slug_dir / "01-clarify.md").write_text("clarified")
+        first = harness.cmd_approve(ns(slug="demo", step=1, feedback="a", force=False))
+        second = harness.cmd_approve(ns(slug="demo", step=1, feedback="b", force=True))
+        self.assertEqual(first["feedback"], "a")
+        self.assertEqual(second["feedback"], "b")
+
+    def test_artifact_checksum_matches_content(self):
+        (self.slug_dir / "01-clarify.md").write_text("hello")
+        r = harness.cmd_approve(ns(slug="demo", step=1, feedback=None, force=False))
+        expected = harness.sha256_str("hello")
+        self.assertEqual(r["artifact_checksum"], expected)
+
+
+# --------------------------- archive-plan ---------------------------
+
+class TestArchivePlan(HarnessTestBase):
+    def setUp(self):
+        super().setUp()
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        self.slug_dir = self.base / "demo"
+
+    def test_archive_first_time(self):
+        self.write_plan(
+            "demo",
+            [{"phase": 1, "name": "s", "tasks": [{"id": "1.1", "name": "a", "prompt": "x", "depends_on": []}]}],
+        )
+        r = harness.cmd_archive_plan(ns(slug="demo"))
+        self.assertEqual(r["archived_to"], "03-plan.v1/")
+        self.assertEqual(r["new_version"], 2)
+        self.assertTrue((self.slug_dir / "03-plan.v1").is_dir())
+        self.assertTrue((self.slug_dir / "03-plan").is_dir())
+        self.assertFalse(any((self.slug_dir / "03-plan").glob("phase-*.yaml")))
+
+    def test_archive_increments_version(self):
+        self.write_plan(
+            "demo",
+            [{"phase": 1, "name": "s", "tasks": [{"id": "1.1", "name": "a", "prompt": "x", "depends_on": []}]}],
+        )
+        harness.cmd_archive_plan(ns(slug="demo"))
+        # Now write a new plan and archive again
+        self.write_plan(
+            "demo",
+            [{"phase": 1, "name": "s", "tasks": [{"id": "1.1", "name": "a", "prompt": "y", "depends_on": []}]}],
+        )
+        r = harness.cmd_archive_plan(ns(slug="demo"))
+        self.assertEqual(r["archived_to"], "03-plan.v2/")
+        self.assertEqual(r["new_version"], 3)
+
+    def test_no_plan_to_archive(self):
+        with self.assertRaises(harness.HarnessError) as cm:
+            harness.cmd_archive_plan(ns(slug="demo"))
+        self.assertEqual(cm.exception.code, harness.EXIT_STATE)
+
+    def test_empty_plan_dir_rejected(self):
+        (self.slug_dir / "03-plan").mkdir()
+        with self.assertRaises(harness.HarnessError) as cm:
+            harness.cmd_archive_plan(ns(slug="demo"))
+        self.assertEqual(cm.exception.code, harness.EXIT_STATE)
+
+    def test_sidecars_survive_archive(self):
+        # sidecars under 04-generate/ are not touched
+        self.write_plan(
+            "demo",
+            [{"phase": 1, "name": "s", "tasks": [{"id": "1.1", "name": "a", "prompt": "x", "depends_on": []}]}],
+        )
+        harness.cmd_log(
+            ns(slug="demo", task_id="1.1", status="success", attempt_start=True, outputs=None, last_error=None)
+        )
+        harness.cmd_archive_plan(ns(slug="demo"))
+        self.assertTrue((self.slug_dir / "04-generate" / "task-1.1.json").exists())
 
 
 # --------------------------- integration: CLI exit codes ---------------------------

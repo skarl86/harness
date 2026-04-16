@@ -360,7 +360,9 @@ harness.py log <slug> <task_id>
 - If the sidecar doesn't exist, creates it populated from the plan
   (phase, depends_on, plan_checksum).
 - If it exists, merges the requested changes.
-- On `--attempt-start`, also bumps `attempts` by 1.
+- On `--attempt-start`, also bumps `attempts` by 1, stamps `started`, clears
+  both `last_error` and `completed`, and refreshes `plan_checksum` +
+  `depends_on` from the current plan.
 - `completed` is auto-stamped when status transitions to a terminal state
   (`success`, `failed`, `blocked`, `skipped`).
 - `last_updated` is always stamped to now.
