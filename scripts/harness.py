@@ -597,6 +597,7 @@ def cmd_log(args) -> dict:
     if args.attempt_start:
         existing["attempts"] = existing.get("attempts", 0) + 1
         existing["started"] = now
+        existing["completed"] = None
         existing["last_error"] = None
         existing["plan_checksum"] = sha256_str(canonical_task_json(task_def))
         existing["depends_on"] = task_def.get("depends_on", []) or []
@@ -767,6 +768,84 @@ def cmd_summary(args) -> dict:
     return {"summary_path": str(out_path), "totals": totals}
 
 
+def _artifact_checksum_for_step(slug_dir: Path, step: int) -> str | None:
+    """Compute checksum of the gated artifact. None if artifact missing."""
+    if step == 1:
+        f = slug_dir / "01-clarify.md"
+        if not f.exists():
+            return None
+        return sha256_str(f.read_text(encoding="utf-8"))
+    if step == 3:
+        plan_dir = slug_dir / "03-plan"
+        if not plan_dir.exists():
+            return None
+        parts = []
+        for f in sorted(plan_dir.glob("phase-*.yaml")):
+            parts.append(f.name)
+            parts.append(f.read_text(encoding="utf-8"))
+        if not parts:
+            return None
+        return sha256_str("\n".join(parts))
+    return None
+
+
+def cmd_approve(args) -> dict:
+    slug_dir = require_slug_dir(args.slug)
+    if args.step not in (1, 3):
+        raise HarnessError(EXIT_USAGE, "--step must be 1 or 3")
+
+    path = approval_path(slug_dir, args.step)
+    if path.exists() and not args.force:
+        raise HarnessError(
+            EXIT_STATE,
+            f"step {args.step} already approved at {path}; pass --force to overwrite",
+        )
+
+    checksum = _artifact_checksum_for_step(slug_dir, args.step)
+    if checksum is None:
+        artifact = "01-clarify.md" if args.step == 1 else "03-plan/*.yaml"
+        raise HarnessError(
+            EXIT_STATE,
+            f"cannot approve step {args.step}: gated artifact {artifact} is missing",
+        )
+
+    record = {
+        "schema_version": SCHEMA_VERSION,
+        "step": args.step,
+        "approved_at": now_iso(),
+        "feedback": args.feedback if args.feedback else None,
+        "artifact_checksum": checksum,
+    }
+    write_json(path, record)
+    return record
+
+
+def cmd_archive_plan(args) -> dict:
+    slug_dir = require_slug_dir(args.slug)
+    plan_dir = slug_dir / "03-plan"
+    if not plan_dir.exists() or not any(plan_dir.glob("phase-*.yaml")):
+        raise HarnessError(
+            EXIT_STATE, "no current plan to archive (03-plan/ missing or empty)"
+        )
+    existing = find_plan_archives(slug_dir)
+    highest = 0
+    for name in existing:
+        m = re.match(r"^03-plan\.v(\d+)$", name)
+        if m:
+            n = int(m.group(1))
+            if n > highest:
+                highest = n
+    archive_label = highest + 1          # the label the old plan is archived under
+    next_live_label = archive_label + 1  # the label the new (about-to-be-written) plan will carry
+    archived_to = f"03-plan.v{archive_label}"
+    dest = slug_dir / archived_to
+    if dest.exists():
+        raise HarnessError(EXIT_STATE, f"archive target already exists: {dest}")
+    os.rename(plan_dir, dest)
+    plan_dir.mkdir()
+    return {"archived_to": archived_to + "/", "new_version": next_live_label}
+
+
 # ---------- argparse plumbing ----------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -808,6 +887,20 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("summary", help="write summary.md aggregating task states")
     s.add_argument("slug")
     s.set_defaults(func=cmd_summary)
+
+    s = sub.add_parser("approve", help="record user approval for a gated step")
+    s.add_argument("slug")
+    s.add_argument("--step", type=int, required=True, help="1 (Clarify) or 3 (Plan)")
+    s.add_argument("--feedback", help="free-form user comment captured with the approval")
+    s.add_argument("--force", action="store_true", help="overwrite an existing approval")
+    s.set_defaults(func=cmd_approve)
+
+    s = sub.add_parser(
+        "archive-plan",
+        help="move current 03-plan/ to 03-plan.v{N+1}/ and create empty 03-plan/",
+    )
+    s.add_argument("slug")
+    s.set_defaults(func=cmd_archive_plan)
 
     return p
 
