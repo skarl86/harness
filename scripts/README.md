@@ -272,8 +272,14 @@ harness.py scan <slug>
   (`approved` implies `completed` + user gate passed.)
 - `phases[].status`: `not_started | in_progress | completed | blocked`.
   - `blocked` means at least one task is `failed` with `attempts >= HARNESS_MAX_ATTEMPTS`.
-- `resume_point.reason`: `not_started | in_progress | failed_within_budget |
-  failed_exceeded_budget | waiting_for_approval | pipeline_complete`.
+- `resume_point.reason`: one of
+  - `not_started` — runnable task that has never been attempted (carries `task_id`, `phase`)
+  - `in_progress` — task whose last recorded status is `running` (carries `task_id`, `phase`)
+  - `failed_within_budget` — task is `failed` and `attempts < HARNESS_MAX_ATTEMPTS` (carries `task_id`, `phase`)
+  - `waiting_for_approval` — Step 1 or Step 3 artifact exists but no approval recorded (carries `step: 1 | 3`)
+  - `steps_incomplete` — an earlier step's artifact is missing (carries `step: N`)
+  - `blocked` — every remaining candidate task either exceeded its retry budget or depends on a blocked predecessor (carries `blocked_tasks`)
+  - `pipeline_complete` — Step 5 artifact exists and all prior steps are done
 - `orphans`: task ids that have sidecars but no matching entry in current plan.
 - `stale`: task ids whose `plan_checksum` disagrees with the current plan's
   canonicalized hash for that task.
@@ -326,8 +332,9 @@ harness.py next <slug>
 ```
 
 `reason` in the no-task case is one of: `pipeline_complete`,
-`waiting_for_approval` (carries `step: N`), or `blocked`
-(carries `blocked_tasks: ["2.2"]`).
+`waiting_for_approval` (carries `step: N`), `steps_incomplete`
+(carries `step: N`), or `blocked` (carries `blocked_tasks: [...]`).
+Same vocabulary as `scan`'s `resume_point.reason`.
 
 **Exit codes:** `0`, `3`.
 
