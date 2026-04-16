@@ -56,8 +56,10 @@ Install inside any Claude Code session:
 
 ```
 /plugin marketplace add skarl86/harness
-/plugin install harness@harness
+/plugin install harness@claude-harness
 ```
+
+> `skarl86/harness` is the GitHub slug (where the marketplace lives). `claude-harness` is the marketplace name declared in `.claude-plugin/marketplace.json`. The plugin itself is `harness`.
 
 One-time runtime prereq:
 
