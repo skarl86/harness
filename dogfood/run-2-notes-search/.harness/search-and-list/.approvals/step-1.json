@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "step": 1,
+  "approved_at": "2026-04-16T18:17:41Z",
+  "feedback": "parallel fallback ok, case-insensitive regex, keep existing tests",
+  "artifact_checksum": "sha256:fa07dd89b80c81b98c6773c4e5359ccfb1f693dafb9fc92f80ea294557fa5c7b"
+}

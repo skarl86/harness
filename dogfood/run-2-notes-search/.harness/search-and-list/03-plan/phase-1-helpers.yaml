@@ -1,0 +1,67 @@
+phase: 1
+name: "Helpers"
+description: "search_notes와 list_notes 헬퍼 함수를 notes.py에 추가. 두 Task 모두 같은 파일 수정 — conflicts 검증 예상."
+tasks:
+  - id: "1.1"
+    name: "Add search_notes helper"
+    description: "notes.py에 search_notes() 추가. case-insensitive 부분 문자열 기본, --regex 옵션."
+    artifacts:
+      inputs: ["notes.py"]
+      outputs: ["notes.py"]
+    prompt: |
+      `notes.py`를 편집한다:
+
+      1. 상단 import에 `import re` 추가
+      2. 새 헬퍼 함수:
+         ```python
+         def search_notes(notes_path: Path, query: str, regex: bool = False) -> list[tuple[int, str]]:
+             """Return (line_number, line) pairs matching `query`. 1-indexed."""
+             if not notes_path.exists():
+                 return []
+             matches: list[tuple[int, str]] = []
+             if regex:
+                 pattern = re.compile(query, re.IGNORECASE)
+                 check = lambda s: pattern.search(s) is not None
+             else:
+                 q = query.lower()
+                 check = lambda s: q in s.lower()
+             with notes_path.open(encoding="utf-8") as f:
+                 for idx, line in enumerate(f, start=1):
+                     line = line.rstrip("\n")
+                     if check(line):
+                         matches.append((idx, line))
+             return matches
+         ```
+      3. `add_note` 위치 바로 아래에 배치 (파일 순서 일관성).
+      4. **기존 `add_note`와 `main()`을 건드리지 말 것** — 회귀 방지.
+
+      ## 완료 조건
+      - `python3 -c "import notes; print(notes.search_notes)"` 성공
+      - 기존 `python3 -m unittest test_notes` 그대로 통과
+    depends_on: []
+
+  - id: "1.2"
+    name: "Add list_notes helper"
+    description: "notes.py에 list_notes() 추가."
+    artifacts:
+      inputs: ["notes.py"]
+      outputs: ["notes.py"]
+    prompt: |
+      `notes.py`를 편집한다:
+
+      1. 새 헬퍼 함수:
+         ```python
+         def list_notes(notes_path: Path) -> list[tuple[int, str]]:
+             """Return all notes as (line_number, line) pairs. 1-indexed."""
+             if not notes_path.exists():
+                 return []
+             with notes_path.open(encoding="utf-8") as f:
+                 return [(idx, line.rstrip("\n")) for idx, line in enumerate(f, start=1)]
+         ```
+      2. `search_notes` 아래에 배치.
+      3. 기존 `add_note`/`main()` 건드리지 말 것.
+
+      ## 완료 조건
+      - `python3 -c "import notes; print(notes.list_notes)"` 성공
+      - 기존 테스트 통과
+    depends_on: []
