@@ -1,0 +1,63 @@
+phase: 2
+name: "CLI wiring and tests"
+description: "main()에 search/list subcommand 연결 + 새 테스트 추가."
+tasks:
+  - id: "2.1"
+    name: "Wire search and list into argparse + dispatch"
+    description: "main()에 두 subcommand 등록 + dispatch 분기."
+    artifacts:
+      inputs: ["notes.py"]
+      outputs: ["notes.py"]
+    prompt: |
+      `notes.py`의 `main()`을 편집:
+
+      1. `sub.add_parser(...)` 블록에 두 항목 추가:
+         - `search` parser: `query` positional, `--regex` flag (store_true)
+         - `list` parser: (positional/flag 없음)
+      2. dispatch 체인 확장:
+         ```python
+         if args.cmd == "add":
+             add_note(args.text, args.notes_path)
+             return 0
+         if args.cmd == "search":
+             for n, line in search_notes(args.notes_path, args.query, args.regex):
+                 print(f"{n}: {line}")
+             return 0
+         if args.cmd == "list":
+             for n, line in list_notes(args.notes_path):
+                 print(f"{n}: {line}")
+             return 0
+         return 1
+         ```
+      3. 기존 `add` 동작은 그대로.
+
+      ## 완료 조건
+      - `python3 notes.py --help` 에 search, list 표시
+      - `python3 notes.py search foo` 실행 가능 (빈 노트 파일이면 출력 없음, exit 0)
+      - 기존 테스트 통과
+    depends_on: ["1.1", "1.2"]
+
+  - id: "2.2"
+    name: "Add search and list tests"
+    description: "test_notes.py에 TestSearch, TestList 클래스 추가."
+    artifacts:
+      inputs: ["notes.py", "test_notes.py"]
+      outputs: ["test_notes.py"]
+    prompt: |
+      `test_notes.py`에 클래스 추가. 기존 `TestAddNote`는 건드리지 말 것.
+
+      1. `TestSearch` (unittest.TestCase):
+         - setUp에서 임시 notes 파일 생성, 5줄 정도 샘플 (예: "apple", "banana", "Apple pie", "grape", "APPLE JUICE")
+         - tearDown에서 정리
+         - `test_plain_substring`: `search_notes(p, "apple")` → 3 매치 (1, 3, 5 라인)
+         - `test_regex_mode`: `search_notes(p, r"^ap", regex=True)` → "apple"과 "APPLE JUICE"? (대소문자 무시니까 yes)
+         - `test_missing_file`: 존재하지 않는 경로 → `[]`
+
+      2. `TestList`:
+         - setUp/tearDown 유사
+         - `test_list_all`: 3줄 쓰고 `list_notes(p)` → `[(1,...), (2,...), (3,...)]`
+         - `test_missing_file`: 빈 list
+
+      ## 완료 조건
+      - `python3 -m unittest test_notes` 실행 시 기존 2개 + 새 5개 = 총 7 tests 통과
+    depends_on: ["2.1"]

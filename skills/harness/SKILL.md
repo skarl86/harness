@@ -447,6 +447,18 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/harness.py" log <slug> <task_id> --status
 
 실패(Agent 에러 반환, verify ok=false, 또는 syntax 검증 실패)면 4-2로.
 
+e. **회귀 테스트** (task가 기존 파일을 수정했을 때):
+
+Task가 새 파일만 만든 게 아니라 **기존 소스 파일을 편집했다면** 프로젝트의 테스트 명령을 Bash로 실행해 회귀가 없는지 확인한다. 예:
+- Python + unittest: `python3 -m unittest` (프로젝트 루트에서)
+- pytest: `pytest`
+- npm: `npm test`
+- cargo: `cargo test`
+
+회귀가 발생하면 **Class B (사용자 판단)** 로 취급한다. 자동 재시도하지 말 것 — 실패한 테스트가 "코드가 잘못"이 아니라 "테스트가 함께 업데이트돼야 할 변경"인 경우가 있어 Claude가 단독으로 결정할 수 없다.
+
+CLI가 이 단계를 자동화하지 않는 이유: 테스트 프레임워크가 프로젝트마다 다르고 (pytest/unittest/jest/go test/cargo test …) stdlib 범위를 벗어난다. 프로젝트 컨텍스트를 아는 Claude가 정확한 명령을 고르는 게 맞다.
+
 ### 4-2. 실패 분류 결정트리
 
 실패가 감지되면 (Agent 에러 반환 OR `verify`의 `ok: false`) 다음 순서로 처리:
