@@ -1,0 +1,66 @@
+name: pin-marketplace-on-release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve tag sha
+        id: tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          SHA=$(git rev-list -n 1 "$TAG")
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Pinning marketplace to $TAG ($SHA)"
+
+      - name: Update marketplace.json source to pinned github repo + sha
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          sha = os.environ["PIN_SHA"]
+          path = pathlib.Path(".claude-plugin/marketplace.json")
+          data = json.loads(path.read_text())
+          changed = False
+          for plugin in data.get("plugins", []):
+              if plugin.get("name") != "harness":
+                  continue
+              new_source = {
+                  "source": "github",
+                  "repo": "skarl86/harness",
+                  "sha": sha,
+              }
+              if plugin.get("source") != new_source:
+                  plugin["source"] = new_source
+                  changed = True
+          if changed:
+              path.write_text(json.dumps(data, indent=2) + "\n")
+              print("marketplace.json updated")
+          else:
+              print("marketplace.json already pinned to this sha; nothing to do")
+          PY
+        env:
+          PIN_SHA: ${{ steps.tag.outputs.sha }}
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet .claude-plugin/marketplace.json; then
+            echo "no marketplace changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .claude-plugin/marketplace.json
+          git commit -m "chore: pin marketplace source to ${{ steps.tag.outputs.tag }}"
+          git push origin main

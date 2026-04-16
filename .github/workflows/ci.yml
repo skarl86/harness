@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install pyyaml jsonschema
+
+      - name: Unit tests
+        run: python -m unittest scripts.tests.test_harness
+
+      - name: CLI help (argparse sanity)
+        run: python scripts/harness.py --help
+
+      - name: JSON Schema conformance (draft-07)
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          from jsonschema import Draft7Validator
+
+          failed = False
+          for f in sorted(pathlib.Path("scripts/schemas").glob("*.json")):
+              try:
+                  Draft7Validator.check_schema(json.loads(f.read_text()))
+                  print(f"  ok  {f.name}")
+              except Exception as e:
+                  print(f"  FAIL  {f.name}: {e}")
+                  failed = True
+          raise SystemExit(1 if failed else 0)
+          PY
+
+      - name: Plugin + marketplace manifest sanity
+        run: |
+          python - <<'PY'
+          import json
+          plugin = json.loads(open(".claude-plugin/plugin.json").read())
+          market = json.loads(open(".claude-plugin/marketplace.json").read())
+
+          assert plugin.get("name") == "harness", f"plugin name: {plugin.get('name')!r}"
+          assert plugin.get("version"), "plugin.json missing version"
+
+          assert market.get("name") == "claude-harness", f"marketplace name: {market.get('name')!r}"
+          names = [p["name"] for p in market.get("plugins", [])]
+          assert "harness" in names, f"harness not listed in marketplace plugins: {names}"
+          print("manifests ok")
+          PY
+
+      - name: End-to-end smoke
+        run: |
+          python - <<'PY'
+          import json, os, subprocess, tempfile
+          def run(*args, env_extra=None, expect=0):
+              env = {**os.environ, **(env_extra or {})}
+              r = subprocess.run(
+                  ["python", "scripts/harness.py", *args],
+                  capture_output=True, text=True, env=env,
+              )
+              assert r.returncode == expect, f"{args} -> {r.returncode}: {r.stderr}"
+              return json.loads(r.stdout) if r.stdout else None
+
+          with tempfile.TemporaryDirectory() as d:
+              env = {"HARNESS_BASE_DIR": d + "/.harness"}
+              os.makedirs(d + "/.harness")
+              r = run("slug", "--request", "smoke", "--suggested", "smoke", env_extra=env)
+              assert r["status"] == "created"
+              r = run("scan", "smoke", env_extra=env)
+              assert r["pipeline_status"] == "not_started"
+              print("smoke ok")
+          PY
