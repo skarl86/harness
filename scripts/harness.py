@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -768,6 +769,181 @@ def cmd_summary(args) -> dict:
     return {"summary_path": str(out_path), "totals": totals}
 
 
+def cmd_classify_failure(args) -> dict:
+    slug_dir = require_slug_dir(args.slug)
+    task_id = args.task_id
+    if not TASK_ID_RE.match(task_id):
+        raise HarnessError(EXIT_USAGE, f"bad task id: {task_id!r}")
+
+    state = load_task_state(slug_dir, task_id)
+    if state is None:
+        raise HarnessError(EXIT_STATE, f"no sidecar for task {task_id}")
+    if state.get("status") != "failed":
+        raise HarnessError(
+            EXIT_STATE,
+            f"classify-failure requires status=failed; got {state.get('status')!r}",
+        )
+
+    plan = load_plan(slug_dir)
+    task_def = plan["tasks_by_id"].get(task_id)
+    if task_def is None:
+        raise HarnessError(EXIT_STATE, f"task {task_id} not in current plan")
+    declared = (task_def.get("artifacts") or {}).get("outputs", []) or []
+
+    attempts = state.get("attempts", 0)
+    max_attempts = get_max_attempts()
+    last_error = state.get("last_error") or ""
+
+    root = project_root()
+    missing_or_empty = []
+    for p in declared:
+        full = (root / p) if not os.path.isabs(p) else Path(p)
+        if not full.exists():
+            missing_or_empty.append((p, "missing"))
+        elif full.stat().st_size == 0:
+            missing_or_empty.append((p, "empty"))
+
+    transient_kw = (
+        "typeerror", "syntaxerror", "importerror", "modulenotfounderror",
+        "nameerror", "indentationerror", "cannot find", "not found",
+        "does not exist", "undefined",
+    )
+    low_err = last_error.lower()
+    if not last_error:
+        error_sig = "absent"
+    elif any(kw in low_err for kw in transient_kw):
+        error_sig = "transient"
+    else:
+        error_sig = "non_transient"
+
+    reasons: list[str] = []
+    if not declared:
+        reasons.append("task declared no outputs; cannot verify structural failure")
+        suggested, confidence = "C", "low"
+    else:
+        if len(missing_or_empty) == len(declared):
+            output_sig = "all_missing"
+        elif missing_or_empty:
+            output_sig = "partial_missing"
+        else:
+            output_sig = "all_present"
+
+        # Decision matrix on (output_sig, error_sig)
+        if output_sig == "all_missing":
+            if error_sig == "transient":
+                reasons.append(
+                    f"all {len(declared)} outputs missing, but transient error suggests retryable: {last_error[:120]}"
+                )
+                suggested, confidence = "A", "medium"
+            else:
+                reasons.append(
+                    f"all {len(declared)} outputs missing and error_signal={error_sig} (no retryable signal)"
+                )
+                suggested, confidence = "C", "high"
+        elif output_sig == "partial_missing":
+            issues = ", ".join(f"{p} ({issue})" for p, issue in missing_or_empty)
+            reasons.append(
+                f"{len(missing_or_empty)}/{len(declared)} outputs with issues: {issues}"
+            )
+            suggested, confidence = "A", "high"
+        else:  # all_present
+            if error_sig == "transient":
+                reasons.append(
+                    f"outputs present but transient error: {last_error[:120]}"
+                )
+                suggested, confidence = "A", "medium"
+            elif error_sig == "non_transient":
+                reasons.append(
+                    f"outputs present, non-transient error: {last_error[:120]}"
+                )
+                suggested, confidence = "B", "low"
+            else:
+                reasons.append("status=failed but no last_error and all outputs present")
+                suggested, confidence = "B", "low"
+
+    if suggested == "A" and attempts >= max_attempts:
+        reasons.append(
+            f"attempts ({attempts}) >= HARNESS_MAX_ATTEMPTS ({max_attempts}); escalating A -> B"
+        )
+        suggested, confidence = "B", "high"
+
+    return {
+        "task_id": task_id,
+        "suggested_class": suggested,
+        "confidence": confidence,
+        "reasons": reasons,
+    }
+
+
+def cmd_stale(args) -> dict:
+    slug_dir = require_slug_dir(args.slug)
+    plan = load_plan(slug_dir)
+    states = load_all_task_states(slug_dir)
+    _, stale_tasks = _orphans_and_stale(plan, states)
+
+    stale_approvals = []
+    for step in (1, 3):
+        appr = load_approval(slug_dir, step)
+        if appr is None:
+            continue
+        recorded = appr.get("artifact_checksum")
+        current = _artifact_checksum_for_step(slug_dir, step)
+        if recorded and current and recorded != current:
+            stale_approvals.append(
+                {"step": step, "recorded": recorded, "current": current}
+            )
+    return {"stale_tasks": stale_tasks, "stale_approvals": stale_approvals}
+
+
+def cmd_cleanup(args) -> dict:
+    slug_dir = require_slug_dir(args.slug)
+    if args.purge:
+        shutil.rmtree(slug_dir)
+        return {"slug": args.slug, "action": "purged", "backup_path": None}
+    ts = now_iso().replace(":", "-")
+    backup = slug_dir.parent / f"{slug_dir.name}.backup-{ts}"
+    if backup.exists():
+        raise HarnessError(EXIT_STATE, f"backup target already exists: {backup}")
+    os.rename(slug_dir, backup)
+    return {
+        "slug": args.slug,
+        "action": "backed_up",
+        "backup_path": str(backup) + "/",
+    }
+
+
+def cmd_list(args) -> dict:
+    base = get_base_dir()
+    if not base.exists():
+        return {"slugs": []}
+    slugs_out = []
+    for entry in sorted(base.iterdir()):
+        if not entry.is_dir():
+            continue
+        if entry.name.startswith(".") or ".backup-" in entry.name:
+            continue
+        req = entry / "00-request.md"
+        created_at = None
+        if req.exists():
+            created_at = (
+                datetime.fromtimestamp(req.stat().st_mtime, timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%SZ")
+            )
+        try:
+            status = cmd_scan(argparse.Namespace(slug=entry.name))["pipeline_status"]
+        except HarnessError:
+            status = "error"
+        slugs_out.append(
+            {
+                "slug": entry.name,
+                "path": str(entry) + "/",
+                "pipeline_status": status,
+                "created_at": created_at,
+            }
+        )
+    return {"slugs": slugs_out}
+
+
 def _artifact_checksum_for_step(slug_dir: Path, step: int) -> str | None:
     """Compute checksum of the gated artifact. None if artifact missing."""
     if step == 1:
@@ -901,6 +1077,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     s.add_argument("slug")
     s.set_defaults(func=cmd_archive_plan)
+
+    s = sub.add_parser(
+        "classify-failure",
+        help="heuristic class (A/B/C) for a failed task",
+    )
+    s.add_argument("slug")
+    s.add_argument("task_id")
+    s.set_defaults(func=cmd_classify_failure)
+
+    s = sub.add_parser("stale", help="surface tasks and approvals whose checksums have drifted")
+    s.add_argument("slug")
+    s.set_defaults(func=cmd_stale)
+
+    s = sub.add_parser(
+        "cleanup",
+        help="back up (default) or purge (--purge) a slug's artifact tree",
+    )
+    s.add_argument("slug")
+    s.add_argument("--purge", action="store_true", help="delete without creating a backup")
+    s.set_defaults(func=cmd_cleanup)
+
+    s = sub.add_parser("list", help="enumerate all slugs under .harness/")
+    s.set_defaults(func=cmd_list)
 
     return p
 
