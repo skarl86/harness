@@ -849,6 +849,142 @@ class TestList(HarnessTestBase):
         self.assertIsNotNone(r["slugs"][0]["created_at"])
 
 
+# --------------------------- config + max_attempts resolution ---------------------------
+
+class TestConfig(HarnessTestBase):
+    def setUp(self):
+        super().setUp()
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        self.slug_dir = self.base / "demo"
+
+    def test_view_when_no_config(self):
+        r = harness.cmd_config(ns(slug="demo", max_attempts=None))
+        self.assertEqual(r, {"schema_version": 1})
+        self.assertFalse(harness.config_path(self.slug_dir).exists())
+
+    def test_set_max_attempts_writes_file(self):
+        r = harness.cmd_config(ns(slug="demo", max_attempts=3))
+        self.assertEqual(r["max_attempts"], 3)
+        self.assertTrue(harness.config_path(self.slug_dir).exists())
+        written = json.loads(harness.config_path(self.slug_dir).read_text())
+        self.assertEqual(written, {"schema_version": 1, "max_attempts": 3})
+
+    def test_negative_max_attempts_rejected(self):
+        with self.assertRaises(harness.HarnessError) as cm:
+            harness.cmd_config(ns(slug="demo", max_attempts=-1))
+        self.assertEqual(cm.exception.code, harness.EXIT_USAGE)
+
+    def test_update_preserves_other_fields(self):
+        harness.cmd_config(ns(slug="demo", max_attempts=5))
+        # View again with no args — should return what was set
+        r = harness.cmd_config(ns(slug="demo", max_attempts=None))
+        self.assertEqual(r["max_attempts"], 5)
+
+
+class TestMaxAttemptsResolution(HarnessTestBase):
+    def setUp(self):
+        super().setUp()
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        self.slug_dir = self.base / "demo"
+        # Clear env to start
+        self._prev_env.setdefault("HARNESS_MAX_ATTEMPTS", os.environ.get("HARNESS_MAX_ATTEMPTS"))
+        os.environ.pop("HARNESS_MAX_ATTEMPTS", None)
+
+    def test_default_when_no_env_no_config(self):
+        self.assertEqual(harness.get_max_attempts(self.slug_dir), 1)
+
+    def test_config_overrides_default(self):
+        harness.cmd_config(ns(slug="demo", max_attempts=4))
+        self.assertEqual(harness.get_max_attempts(self.slug_dir), 4)
+
+    def test_env_overrides_config(self):
+        harness.cmd_config(ns(slug="demo", max_attempts=4))
+        os.environ["HARNESS_MAX_ATTEMPTS"] = "7"
+        try:
+            self.assertEqual(harness.get_max_attempts(self.slug_dir), 7)
+        finally:
+            os.environ.pop("HARNESS_MAX_ATTEMPTS", None)
+
+    def test_env_without_slug_still_works(self):
+        os.environ["HARNESS_MAX_ATTEMPTS"] = "9"
+        try:
+            self.assertEqual(harness.get_max_attempts(), 9)
+        finally:
+            os.environ.pop("HARNESS_MAX_ATTEMPTS", None)
+
+
+# --------------------------- verify --syntax ---------------------------
+
+class TestVerifySyntax(HarnessTestBase):
+    def setUp(self):
+        super().setUp()
+        harness.cmd_slug(ns(request="demo", suggested="demo"))
+        self.write_plan(
+            "demo",
+            [{
+                "phase": 1, "name": "s",
+                "tasks": [
+                    {"id": "1.1", "name": "py", "prompt": "x",
+                     "artifacts": {"outputs": ["a.py"]}, "depends_on": []},
+                    {"id": "1.2", "name": "json", "prompt": "x",
+                     "artifacts": {"outputs": ["a.json"]}, "depends_on": []},
+                    {"id": "1.3", "name": "yaml", "prompt": "x",
+                     "artifacts": {"outputs": ["a.yaml"]}, "depends_on": []},
+                    {"id": "1.4", "name": "unknown", "prompt": "x",
+                     "artifacts": {"outputs": ["a.ts"]}, "depends_on": []},
+                ],
+            }],
+        )
+        for tid in ("1.1", "1.2", "1.3", "1.4"):
+            harness.cmd_log(
+                ns(slug="demo", task_id=tid, status="running", attempt_start=True,
+                   outputs=None, last_error=None)
+            )
+
+    def test_python_syntax_pass(self):
+        self.touch("a.py", "x = 1\n")
+        r = harness.cmd_verify(ns(slug="demo", task_id="1.1", syntax=True))
+        self.assertTrue(r["ok"])
+
+    def test_python_syntax_fail(self):
+        self.touch("a.py", "def broken(:\n    pass\n")
+        r = harness.cmd_verify(ns(slug="demo", task_id="1.1", syntax=True))
+        self.assertFalse(r["ok"])
+        self.assertIn("syntax_error", r["outputs"][0]["issue"])
+
+    def test_python_structural_only_skips_syntax(self):
+        self.touch("a.py", "def broken(:\n    pass\n")
+        r = harness.cmd_verify(ns(slug="demo", task_id="1.1", syntax=False))
+        self.assertTrue(r["ok"])  # structural passes, syntax not checked
+
+    def test_json_syntax_pass(self):
+        self.touch("a.json", '{"ok": 1}')
+        r = harness.cmd_verify(ns(slug="demo", task_id="1.2", syntax=True))
+        self.assertTrue(r["ok"])
+
+    def test_json_syntax_fail(self):
+        self.touch("a.json", '{not valid json')
+        r = harness.cmd_verify(ns(slug="demo", task_id="1.2", syntax=True))
+        self.assertFalse(r["ok"])
+        self.assertIn("syntax_error: JSONDecodeError", r["outputs"][0]["issue"])
+
+    def test_yaml_syntax_pass(self):
+        self.touch("a.yaml", "a: 1\nb: 2\n")
+        r = harness.cmd_verify(ns(slug="demo", task_id="1.3", syntax=True))
+        self.assertTrue(r["ok"])
+
+    def test_yaml_syntax_fail(self):
+        self.touch("a.yaml", "a: 1\nb: : : bad\n")
+        r = harness.cmd_verify(ns(slug="demo", task_id="1.3", syntax=True))
+        self.assertFalse(r["ok"])
+
+    def test_unknown_extension_skips_syntax(self):
+        # .ts has no registered check -> structural pass applies
+        self.touch("a.ts", "const x: number = 1")
+        r = harness.cmd_verify(ns(slug="demo", task_id="1.4", syntax=True))
+        self.assertTrue(r["ok"])
+
+
 # --------------------------- integration: CLI exit codes ---------------------------
 
 class TestCli(HarnessTestBase):

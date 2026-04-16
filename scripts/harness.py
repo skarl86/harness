@@ -44,15 +44,25 @@ def get_base_dir() -> Path:
     return Path(os.environ.get("HARNESS_BASE_DIR", DEFAULT_BASE))
 
 
-def get_max_attempts() -> int:
-    raw = os.environ.get("HARNESS_MAX_ATTEMPTS", str(DEFAULT_MAX_ATTEMPTS))
-    try:
-        n = int(raw)
-    except ValueError:
-        raise HarnessError(EXIT_USAGE, f"HARNESS_MAX_ATTEMPTS must be int, got {raw!r}")
-    if n < 0:
-        raise HarnessError(EXIT_USAGE, "HARNESS_MAX_ATTEMPTS must be >= 0")
-    return n
+def get_max_attempts(slug_dir: Path | None = None) -> int:
+    """Resolve max_attempts with priority: env > config.json > default."""
+    env = os.environ.get("HARNESS_MAX_ATTEMPTS")
+    if env is not None:
+        try:
+            n = int(env)
+        except ValueError:
+            raise HarnessError(EXIT_USAGE, f"HARNESS_MAX_ATTEMPTS must be int, got {env!r}")
+        if n < 0:
+            raise HarnessError(EXIT_USAGE, "HARNESS_MAX_ATTEMPTS must be >= 0")
+        return n
+    if slug_dir is not None:
+        config = load_config(slug_dir)
+        if config and isinstance(config.get("max_attempts"), int):
+            n = config["max_attempts"]
+            if n < 0:
+                raise HarnessError(EXIT_SCHEMA, "config.json max_attempts must be >= 0")
+            return n
+    return DEFAULT_MAX_ATTEMPTS
 
 
 def project_root() -> Path:
@@ -205,6 +215,20 @@ def load_all_task_states(slug_dir: Path) -> dict[str, dict]:
 
 
 # ---------- approvals ----------
+
+def config_path(slug_dir: Path) -> Path:
+    return slug_dir / "config.json"
+
+
+def load_config(slug_dir: Path) -> dict | None:
+    p = config_path(slug_dir)
+    if not p.exists():
+        return None
+    data = read_json(p)
+    if data.get("schema_version") != SCHEMA_VERSION:
+        raise HarnessError(EXIT_SCHEMA, f"unknown schema_version in {p}")
+    return data
+
 
 def approval_path(slug_dir: Path, step: int) -> Path:
     return slug_dir / ".approvals" / f"step-{step}.json"
@@ -516,7 +540,7 @@ def cmd_scan(args) -> dict:
     slug_dir = require_slug_dir(args.slug)
     plan = load_plan(slug_dir)
     task_states = load_all_task_states(slug_dir)
-    max_attempts = get_max_attempts()
+    max_attempts = get_max_attempts(slug_dir)
 
     steps = _step_statuses(slug_dir, plan, task_states)
     phases = _phase_rollup(plan, task_states, max_attempts)
@@ -637,6 +661,38 @@ def cmd_log(args) -> dict:
     return existing
 
 
+def _syntax_check(path: Path) -> tuple[bool, str | None]:
+    """Language-based syntax check keyed on file extension.
+
+    Returns (ok, error_or_None). Unknown extensions are reported as ok=True
+    with error=None (no check performed — structural result remains authoritative).
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        import py_compile
+        try:
+            py_compile.compile(str(path), doraise=True)
+            return True, None
+        except py_compile.PyCompileError as e:
+            msg = getattr(e, "msg", None) or str(e)
+            return False, f"SyntaxError: {msg.strip()}"
+    if suffix == ".json":
+        try:
+            with path.open(encoding="utf-8") as f:
+                json.load(f)
+            return True, None
+        except json.JSONDecodeError as e:
+            return False, f"JSONDecodeError: {e.msg} (line {e.lineno} col {e.colno})"
+    if suffix in (".yaml", ".yml"):
+        yaml = _require_yaml()
+        try:
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+            return True, None
+        except yaml.YAMLError as e:
+            return False, f"YAMLError: {str(e).splitlines()[0]}"
+    return True, None
+
+
 def cmd_verify(args) -> dict:
     slug_dir = require_slug_dir(args.slug)
     task_id = args.task_id
@@ -667,6 +723,12 @@ def cmd_verify(args) -> dict:
                 entry["issue"] = "empty"
                 ok = False
                 issues += 1
+            elif getattr(args, "syntax", False):
+                syn_ok, syn_err = _syntax_check(full)
+                if not syn_ok:
+                    entry["issue"] = f"syntax_error: {syn_err}"
+                    ok = False
+                    issues += 1
         results.append(entry)
 
     state = load_task_state(slug_dir, task_id)
@@ -791,7 +853,7 @@ def cmd_classify_failure(args) -> dict:
     declared = (task_def.get("artifacts") or {}).get("outputs", []) or []
 
     attempts = state.get("attempts", 0)
-    max_attempts = get_max_attempts()
+    max_attempts = get_max_attempts(slug_dir)
     last_error = state.get("last_error") or ""
 
     root = project_root()
@@ -910,6 +972,21 @@ def cmd_cleanup(args) -> dict:
         "action": "backed_up",
         "backup_path": str(backup) + "/",
     }
+
+
+def cmd_config(args) -> dict:
+    slug_dir = require_slug_dir(args.slug)
+    current = load_config(slug_dir) or {"schema_version": SCHEMA_VERSION}
+    modified = False
+    if args.max_attempts is not None:
+        if args.max_attempts < 0:
+            raise HarnessError(EXIT_USAGE, "--max-attempts must be >= 0")
+        current["max_attempts"] = args.max_attempts
+        modified = True
+    if modified:
+        current["schema_version"] = SCHEMA_VERSION
+        write_json(config_path(slug_dir), current)
+    return current
 
 
 def cmd_list(args) -> dict:
@@ -1053,6 +1130,13 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("verify", help="check declared outputs exist and non-empty")
     s.add_argument("slug")
     s.add_argument("task_id")
+    s.add_argument(
+        "--syntax",
+        action="store_true",
+        help="also run a language-based syntax check on each existing output "
+        "(py_compile for .py, json.load for .json, yaml.safe_load for .yaml/.yml; "
+        "unknown extensions are skipped)",
+    )
     s.set_defaults(func=cmd_verify)
 
     s = sub.add_parser("conflicts", help="detect output overlap for parallel tasks")
@@ -1100,6 +1184,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("list", help="enumerate all slugs under .harness/")
     s.set_defaults(func=cmd_list)
+
+    s = sub.add_parser(
+        "config",
+        help="view or update per-slug config.json (persistent alternative to HARNESS_* env vars)",
+    )
+    s.add_argument("slug")
+    s.add_argument(
+        "--max-attempts",
+        type=int,
+        help="set max_attempts in this slug's config.json",
+    )
+    s.set_defaults(func=cmd_config)
 
     return p
 

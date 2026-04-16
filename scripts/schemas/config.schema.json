@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/skarl86/harness/schemas/config.schema.json",
+  "title": "Harness Per-Slug Config",
+  "description": "Optional persistent config at .harness/{slug}/config.json. Overridden by HARNESS_* env vars when present. Every field is optional; missing keys fall through to built-in defaults.",
+  "type": "object",
+  "required": ["schema_version"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "max_attempts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Per-task retry budget. Overridden by HARNESS_MAX_ATTEMPTS env var when set. Default (when both absent): 1."
+    }
+  }
+}
