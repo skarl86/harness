@@ -1,9 +1,10 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "harness",
-  "description": "Self-hosted marketplace shipping the harness plugin: a Clarify -> Context -> Plan -> Generate -> Evaluate pipeline for Claude Code with deterministic state and crash-safe resume.",
   "owner": {
     "name": "skarl86"
+  },
+  "metadata": {
+    "description": "Self-hosted marketplace shipping the harness plugin: a Clarify -> Context -> Plan -> Generate -> Evaluate pipeline for Claude Code with deterministic state and crash-safe resume."
   },
   "plugins": [
     {
