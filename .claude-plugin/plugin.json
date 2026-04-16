@@ -1,0 +1,8 @@
+{
+  "name": "harness",
+  "version": "0.1.0",
+  "description": "Clarify -> Context -> Plan -> Generate -> Evaluate pipeline for feature implementation. Claude orchestrates LLM phases; the harness CLI handles deterministic state, resume detection, and artifact verification.",
+  "author": {
+    "name": "skarl86"
+  }
+}
