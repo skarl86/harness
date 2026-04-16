@@ -1,0 +1,23 @@
+phase: 1
+name: "Core"
+description: "wc.py CLI 구현 — 텍스트 출력 모드만."
+tasks:
+  - id: "1.1"
+    name: "Scaffold wc.py"
+    description: "argparse + main loop + count_words 헬퍼 포함한 단일 파일 CLI."
+    artifacts:
+      inputs: []
+      outputs: ["wc.py"]
+    prompt: |
+      `wc.py`를 생성:
+
+      1. shebang `#!/usr/bin/env python3`
+      2. import: `sys`, `argparse`, `re`, `collections.Counter`
+      3. 헬퍼: `def count_words(text: str) -> Counter:` — `re.findall(r"\w+", text.lower())`로 토큰 추출 후 Counter 반환.
+      4. `main() -> int`: stdin 전체를 읽어 count_words → 빈도 내림차순+알파벳 오름차순 정렬 후 `print(f"{word}: {count}")`.
+      5. `if __name__ == "__main__": sys.exit(main())`
+
+      ## 완료 조건
+      - `echo 'the quick brown fox the lazy the' | python3 wc.py` → `the: 3\nbrown: 1\nfox: 1\nlazy: 1\nquick: 1`
+      - py_compile 통과
+    depends_on: []

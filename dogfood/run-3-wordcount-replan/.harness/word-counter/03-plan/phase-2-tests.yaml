@@ -1,0 +1,21 @@
+phase: 2
+name: "Tests"
+description: "단위 테스트 — count_words + text 모드 + JSON 모드."
+tasks:
+  - id: "2.1"
+    name: "test_wc.py with JSON mode"
+    description: "count_words와 두 출력 모드 모두 커버."
+    artifacts:
+      inputs: ["wc.py"]
+      outputs: ["test_wc.py"]
+    prompt: |
+      `test_wc.py` 생성. unittest 기반:
+
+      - `TestCountWords` (3):
+        - `test_empty`, `test_lowercase`, `test_punctuation`
+      - `TestMainTextMode` (1): stdin/stdout 모킹, 출력 순서 확인
+      - `TestMainJsonMode` (1): `--json` 플래그로 dict 파싱 가능 + 값 일치
+
+      ## 완료 조건
+      - `python3 -m unittest test_wc` 5개 테스트 전부 통과
+    depends_on: ["1.2"]
