@@ -11,7 +11,11 @@
       "name": "harness",
       "description": "Adaptive 5-phase feature-implementation pipeline. SKILL.md drives creative phases via Agent calls; scripts/harness.py holds deterministic state (resume, verify, conflicts, classify-failure). stdlib Python + PyYAML only.",
       "category": "development",
-      "source": "./",
+      "source": {
+        "source": "github",
+        "repo": "skarl86/harness",
+        "sha": "90e81b0d5d6d00b59781b5ecbd68e6103ee103bf"
+      },
       "homepage": "https://github.com/skarl86/harness"
     }
   ]
