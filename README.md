@@ -7,6 +7,8 @@
 Clarify → Context → Plan → Generate → Evaluate.
 Deterministic state, crash-safe resume, hard boundary between creative work and bookkeeping.
 
+**English** · [한국어](./README.ko.md) · [简体中文](./README.zh.md)
+
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://claude.com/claude-code)
 [![Tests](https://img.shields.io/badge/tests-79%20passing-2EA44F)](./scripts/tests/)
